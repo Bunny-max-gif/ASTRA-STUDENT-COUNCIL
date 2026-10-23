@@ -137,8 +137,10 @@ except Exception:
     )
     st.stop()
 
-if updates.empty:.\
-    approved = updates.copy()
+if updates.empty:
+    st.info("No updates available yet.")
+else:
+    st.dataframe(updates)
 else:
     approved = updates[
         updates["status"].astype(str).str.lower() == "approved"

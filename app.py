@@ -31,12 +31,35 @@ st.markdown("""
     color: #f1f5f9;
 }
 h1, h2, h3 {
-    color: #38bdf8;
+    color: #e7b85c !important;
 }
 [data-testid="stMetric"] {
+    background: linear-gradient(145deg, #17243a, #101a2b);
+    border: 1px solid rgba(231,184,92,.24);
+    padding: 18px;
+    border-radius: 14px;
+}
+[data-testid="stMetricLabel"] { color: #b9c4d5 !important; }
+[data-testid="stMetricValue"] { color: #f8fafc !important; }
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    border-bottom: 1px solid rgba(231,184,92,.25);
+}
+.stTabs [data-baseweb="tab"] {
     background: #142238;
-    padding: 15px;
-    border-radius: 12px;
+    border-radius: 9px 9px 0 0;
+    padding: 10px 16px;
+}
+.stButton > button, .stFormSubmitButton > button {
+    background: linear-gradient(100deg, #b7791f, #e7b85c);
+    color: #101827;
+    border: 0;
+    border-radius: 9px;
+    font-weight: 700;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: rgba(231,184,92,.22) !important;
+    border-radius: 14px;
 }
 </style>
 """, unsafe_allow_html=True)

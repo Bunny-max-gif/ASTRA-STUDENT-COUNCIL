@@ -1,380 +1,335 @@
-
 import streamlit as st
 import pandas as pd
 import gspread
 from datetime import date, datetime
+from pathlib import Path
 from google.oauth2.service_account import Credentials
 
 st.set_page_config(
     page_title="ASTRA Mission Control",
-    page_icon="🚀",
-    layout="wide"
+    page_icon="assets/astra_logo.png",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-CLUBS = [
-    "Aeromodelling Club",
-    "Rocketry Club",
-    "Astronomy Club"
-]
+BASE_DIR = Path(__file__).parent
+LOGO_PATH = BASE_DIR / "assets" / "astra_logo.png"
 
-HEADERS = [
-    "timestamp", "club", "project", "week_start",
-    "progress", "work_completed", "challenges",
-    "next_week_plan", "photo_url", "video_url",
-    "budget_spent", "submitted_by", "status", "reviewed_by"
+# These are the council groups represented in the registration spreadsheet.
+COORDINATOR_GROUPS = [
+    "Aeromodelling", "Rocketry", "Astronomy", "Technical", "Research",
+    "Cultural", "Non-Technical", "Disciplinary Committee", "Sports", "Media Team",
 ]
+BUDGETS = {
+    "Aeromodelling Club": 107919,
+    "Astronomy Club": 81280,
+    "Rocketry Club": 92222,
+    "Shared Component Pool": 4520,
+}
+TOTAL_BUDGET = sum(BUDGETS.values())
+
+UPDATE_HEADERS = [
+    "timestamp", "club", "project", "week_start", "progress",
+    "work_completed", "challenges", "next_week_plan", "photo_url",
+    "video_url", "budget_spent", "submitted_by", "status",
+    "reviewed_by", "review_notes", "published",
+]
+EVENT_HEADERS = ["timestamp", "event_name", "club", "event_date", "description", "photo_url", "video_url", "submitted_by", "status", "reviewed_by", "published"]
+ACHIEVEMENT_HEADERS = ["timestamp", "title", "club", "date", "description", "proof_url", "submitted_by", "status", "reviewed_by", "published"]
 
 st.markdown("""
 <style>
-.stApp {
-    background: #0b1220;
-    color: #f1f5f9;
-}
-h1, h2, h3 {
-    color: #38bdf8;
-}
-[data-testid="stMetric"] {
-    background: #142238;
-    padding: 15px;
-    border-radius: 12px;
-}
+.stApp { background: #0b1220; color: #edf2f7; }
+[data-testid="stHeader"] { background: rgba(11,18,32,.92); }
+h1,h2,h3 { color: #e7b85c !important; }
+p, label, [data-testid="stMarkdownContainer"] { color: #e5e7eb; }
+[data-testid="stMetric"] { background: linear-gradient(145deg,#17243a,#101a2b); border:1px solid rgba(231,184,92,.28); padding:16px; border-radius:14px; }
+[data-testid="stMetricLabel"] { color:#bdc8d8 !important; }
+[data-testid="stMetricValue"] { color:#fff !important; }
+.stTabs [data-baseweb="tab"] { background:#142238; border-radius:9px 9px 0 0; padding:10px 14px; }
+.stButton>button,.stFormSubmitButton>button { background:linear-gradient(100deg,#b7791f,#e7b85c); color:#101827; border:0; border-radius:9px; font-weight:700; }
+div[data-testid="stVerticalBlockBorderWrapper"] { border-color:rgba(231,184,92,.24) !important; border-radius:14px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 ASTRA Mission Control")
-st.caption("Sandip University | Aerospace Student Council")
-st.write(
-    "A central dashboard for projects, weekly progress, "
-    "events, achievements and approved budgets."
-)
-
-
-# ---------------- GOOGLE SHEETS ----------------
-
+# ---------------- Google Sheets ----------------
 @st.cache_resource
 def connect_sheet():
+    if "gcp_service_account" not in st.secrets or "spreadsheet_id" not in st.secrets:
+        raise RuntimeError("Missing gcp_service_account or spreadsheet_id in Streamlit Secrets.")
     credentials = Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]),
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"],
     )
     client = gspread.authorize(credentials)
     return client.open_by_key(st.secrets["spreadsheet_id"])
 
 
-def get_worksheet(book, name, headers):
+def worksheet(book, name, headers):
     try:
         ws = book.worksheet(name)
     except gspread.WorksheetNotFound:
-        ws = book.add_worksheet(
-            title=name,
-            rows=1000,
-            cols=len(headers) + 2
-        )
+        ws = book.add_worksheet(title=name, rows=1000, cols=max(20, len(headers)))
         ws.append_row(headers)
-
-    if not ws.get_all_values():
+    values = ws.get_all_values()
+    if not values:
         ws.append_row(headers)
-
+    elif [str(x).strip() for x in values[0]] != headers:
+        # Do not overwrite an existing worksheet with a different schema.
+        raise RuntimeError(f"Worksheet '{name}' has different column headers. Please check its first row.")
     return ws
 
 
-def read_updates(book):
-    ws = get_worksheet(book, "Updates", HEADERS)
+def read_table(book, name, headers):
+    ws = worksheet(book, name, headers)
     rows = ws.get_all_records()
-    return pd.DataFrame(rows, columns=HEADERS)
+    return pd.DataFrame(rows, columns=headers), ws
 
 
-def get_users():
+def users_configured():
+    try:
+        return dict(st.secrets.get("users", {}))
+    except Exception:
+        return {}
+
+
+def normalize_user(email, details):
+    scopes = details.get("scopes", [])
+    if isinstance(scopes, str):
+        scopes = [x.strip() for x in scopes.split(",") if x.strip()]
     return {
-        email.lower(): dict(details)
-        for email, details in st.secrets["users"].items()
+        "email": email.strip().lower(),
+        "name": details.get("name", email),
+        "role": str(details.get("role", "coordinator")).strip().lower(),
+        "scopes": scopes,
+        "password": str(details.get("password", "")),
     }
 
 
-def format_inr(value):
+def login():
+    if st.session_state.get("astra_user"):
+        return st.session_state["astra_user"]
+    st.sidebar.markdown("### Council login")
+    email = st.sidebar.text_input("Registered college email", key="login_email")
+    password = st.sidebar.text_input("Password", type="password", key="login_password")
+    if st.sidebar.button("Sign in", use_container_width=True):
+        configured = users_configured()
+        account_data = configured.get(email.strip().lower()) if email else None
+        if account_data:
+            account = normalize_user(email, dict(account_data))
+            if account["password"] and password == account["password"]:
+                st.session_state["astra_user"] = {k: v for k, v in account.items() if k != "password"}
+                st.rerun()
+        st.sidebar.error("Email or password is incorrect, or this account is not enabled.")
+    return None
+
+
+def fmt_inr(value):
     try:
         return f"₹{float(value):,.0f}"
     except (ValueError, TypeError):
         return "—"
 
 
-# ---------------- LOGIN ----------------
+def safe_link(value, label):
+    value = str(value or "").strip()
+    if value.startswith("https://") or value.startswith("http://"):
+        st.markdown(f"[{label}]({value})")
 
-def login():
-    if st.session_state.get("user"):
-        return st.session_state["user"]
+# ---------------- Header ----------------
+header_left, header_right = st.columns([1, 5])
+with header_left:
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), width=145)
+with header_right:
+    st.title("ASTRA Mission Control")
+    st.caption("SANDIP UNIVERSITY  |  AEROSPACE STUDENT COUNCIL")
+    st.write("A central command dashboard for clubs, projects, events, achievements and approved budgets.")
 
-    st.sidebar.header("Coordinator Login")
-    email = st.sidebar.text_input("University / registered email")
-    password = st.sidebar.text_input("Password", type="password")
-
-    if st.sidebar.button("Sign in", use_container_width=True):
-        account = get_users().get(email.strip().lower())
-
-        if account and password == account.get("password"):
-            st.session_state["user"] = {
-                "email": email.strip().lower(),
-                "role": account["role"],
-                "club": account.get("club", "")
-            }
-            st.rerun()
-        else:
-            st.sidebar.error("Incorrect email or password.")
-
-    return None
-
-
-# ---------------- GOOGLE DATA ----------------
-
+# ---------------- Connect data ----------------
 try:
     book = connect_sheet()
-    updates = read_updates(book)
-except Exception:
-    st.error(
-        "Google Sheets is not configured yet. "
-        "Create the private Streamlit Secrets file and connect "
-        "your spreadsheet before using the portal."
-    )
+    updates, updates_ws = read_table(book, "Updates", UPDATE_HEADERS)
+    events_df, events_ws = read_table(book, "Events", EVENT_HEADERS)
+    achievements_df, achievements_ws = read_table(book, "Achievements", ACHIEVEMENT_HEADERS)
+except Exception as exc:
+    st.error("Google Sheets connection is not ready. Check Streamlit Cloud → Manage app → Settings → Secrets, then verify that the service account has Editor access to the spreadsheet.")
+    with st.expander("Technical details"):
+        st.code(f"{type(exc).__name__}: {exc}")
     st.stop()
 
-if updates.empty:
-    approved = updates.copy()
-else:
-    approved = updates[
-        updates["status"].astype(str).str.lower() == "approved"
-    ].copy()
+for col in ["status", "published"]:
+    if col not in updates.columns:
+        updates[col] = ""
+approved_updates = updates[updates["status"].astype(str).str.lower().eq("approved")].copy() if not updates.empty else updates.copy()
+published_updates = approved_updates[approved_updates["published"].astype(str).str.lower().isin(["true", "yes", "1", "published"])] if not approved_updates.empty else approved_updates
 
+# ---------------- Navigation ----------------
+tabs = st.tabs(["Overview", "Projects", "Events", "Achievements", "Budgets", "Coordinator Portal"])
 
-# ---------------- DASHBOARD TABS ----------------
-
-overview, projects, events, budgets, portal = st.tabs([
-    "🏠 Overview",
-    "🛩️ Projects",
-    "📅 Events",
-    "💰 Budgets",
-    "🔐 Coordinator Portal"
-])
-
-
-# ---------------- PUBLIC OVERVIEW ----------------
-
-with overview:
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Active Clubs", 3)
-    col2.metric("Approved Reports", len(approved))
-    col3.metric(
-        "Completed Projects",
-        int(
-            (
-                pd.to_numeric(
-                    approved["progress"], errors="coerce"
-                ) >= 100
-            ).sum()
-        ) if not approved.empty else 0
-    )
-
-    st.subheader("Latest Approved Updates")
-
-    if approved.empty:
-        st.info("No approved updates published yet.")
+with tabs[0]:
+    a, b, c, d = st.columns(4)
+    a.metric("Council groups", len(COORDINATOR_GROUPS))
+    b.metric("Approved updates", len(approved_updates))
+    c.metric("Published updates", len(published_updates))
+    completed = pd.to_numeric(approved_updates.get("progress", pd.Series(dtype=float)), errors="coerce")
+    d.metric("Completed projects", int((completed >= 100).sum()))
+    st.subheader("Latest published updates")
+    if published_updates.empty:
+        st.info("No updates have been published yet. Approved reports will appear here after Secretary publication.")
     else:
-        for _, row in approved.iloc[::-1].iterrows():
+        for _, row in published_updates.iloc[::-1].head(12).iterrows():
             with st.container(border=True):
-                st.subheader(str(row["project"]))
-                st.caption(
-                    f'{row["club"]} | Week starting {row["week_start"]}'
-                )
-                progress = pd.to_numeric(
-                    row["progress"], errors="coerce"
-                )
-                st.progress(
-                    int(max(0, min(100, progress if pd.notna(progress) else 0)))
-                )
-                st.write(row["work_completed"])
+                st.markdown(f"### {row.get('project', 'Project')}")
+                st.caption(f"{row.get('club', '')} · Week starting {row.get('week_start', '')}")
+                progress = pd.to_numeric(pd.Series([row.get("progress", 0)]), errors="coerce").fillna(0).iloc[0]
+                st.progress(int(max(0, min(100, progress))))
+                st.write(row.get("work_completed", ""))
+                safe_link(row.get("photo_url"), "View photo")
+                safe_link(row.get("video_url"), "Watch video")
 
-                if str(row["photo_url"]).startswith("https://"):
-                    st.markdown(f'[View photo]({row["photo_url"]})')
-
-                if str(row["video_url"]).startswith("https://"):
-                    st.markdown(f'[Watch demo video]({row["video_url"]})')
-
-
-# ---------------- PROJECTS ----------------
-
-with projects:
-    st.subheader("ASTRA Clubs")
-
-    for club in CLUBS:
+with tabs[1]:
+    st.subheader("Club project activity")
+    club_names = ["Aeromodelling Club", "Rocketry Club", "Astronomy Club", "Technical & Research"]
+    for club in club_names:
+        subset = approved_updates[approved_updates["club"].astype(str).eq(club)] if not approved_updates.empty else pd.DataFrame()
         with st.container(border=True):
             st.markdown(f"### {club}")
-
-            club_updates = approved[
-                approved["club"].astype(str) == club
-            ] if not approved.empty else pd.DataFrame()
-
-            if club_updates.empty:
-                st.caption("No approved reports yet.")
+            if subset.empty:
+                st.caption("No approved project reports yet.")
             else:
-                st.write(f"Approved reports: {len(club_updates)}")
-                st.dataframe(
-                    club_updates[
-                        ["project", "week_start", "progress", "work_completed"]
-                    ],
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(subset[["project", "week_start", "progress", "work_completed"]], use_container_width=True, hide_index=True)
 
+with tabs[2]:
+    st.subheader("Council events")
+    visible_events = events_df[events_df["status"].astype(str).str.lower().eq("approved")] if not events_df.empty else events_df
+    if visible_events.empty:
+        st.info("No approved events have been published yet.")
+    else:
+        for _, row in visible_events.iterrows():
+            with st.container(border=True):
+                st.markdown(f"### {row.get('event_name', 'Event')}")
+                st.caption(f"{row.get('club', '')} · {row.get('event_date', '')}")
+                st.write(row.get("description", ""))
+                safe_link(row.get("photo_url"), "Event photo")
+                safe_link(row.get("video_url"), "Event video")
 
-# ---------------- EVENTS ----------------
+with tabs[3]:
+    st.subheader("Achievements")
+    visible_achievements = achievements_df[achievements_df["status"].astype(str).str.lower().eq("approved")] if not achievements_df.empty else achievements_df
+    if visible_achievements.empty:
+        st.info("No approved achievements yet.")
+    else:
+        for _, row in visible_achievements.iterrows():
+            with st.container(border=True):
+                st.markdown(f"### {row.get('title', 'Achievement')}")
+                st.caption(f"{row.get('club', '')} · {row.get('date', '')}")
+                st.write(row.get("description", ""))
+                safe_link(row.get("proof_url"), "View proof")
 
-with events:
-    st.subheader("Events & Achievements")
-    st.info(
-        "Events will be connected to a separate Events worksheet "
-        "in the next development step."
-    )
+with tabs[4]:
+    st.subheader("Club budgets · 2026–27")
+    cols = st.columns(4)
+    for col, (name, amount) in zip(cols, BUDGETS.items()):
+        col.metric(name, fmt_inr(amount))
+    st.metric("Combined budget", fmt_inr(TOTAL_BUDGET))
+    st.caption("Allocated amounts from the ASTRA combined club budget. Spending is not automatically deducted until finance tracking is configured.")
+    st.dataframe(pd.DataFrame([[k, fmt_inr(v)] for k, v in BUDGETS.items()] + [["Combined Total", fmt_inr(TOTAL_BUDGET)]], columns=["Budget head", "Allocated amount"]), use_container_width=True, hide_index=True)
 
-
-# ---------------- BUDGETS ----------------
-
-with budgets:
-    st.subheader("Revised Club Budgets — 2026–27")
-    st.caption("Estimated amounts from the ASTRA combined budget document.")
-
-    budget_data = pd.DataFrame([
-        ["Aeromodelling Club", 107919],
-        ["Astronomy Club", 81280],
-        ["Rocketry Club", 92222],
-        ["Shared Component Pool", 4520],
-        ["Combined Total", 285941]
-    ], columns=["Budget Head", "Amount (INR)"])
-
-    budget_data["Amount (INR)"] = budget_data["Amount (INR)"].apply(format_inr)
-    st.dataframe(
-        budget_data,
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-# ---------------- COORDINATOR PORTAL ----------------
-
-with portal:
-    st.subheader("Coordinator / Secretary Portal")
+with tabs[5]:
+    st.subheader("Coordinator & Secretary Portal")
     user = login()
-
-    if user:
-        st.success(
-            f"Signed in as {user['email']} | Role: {user['role']}"
-        )
-
-        if st.sidebar.button("Sign out"):
-            del st.session_state["user"]
+    if not user:
+        st.info("Sign in with an approved coordinator or Secretary account. Only these roles receive portal access.")
+        st.caption("Account passwords must be configured privately in Streamlit Cloud Secrets. The registration spreadsheet is used for role and college-email reference only.")
+    else:
+        st.success(f"Signed in: {user.get('name', user['email'])} · {user['role'].title()}")
+        if st.sidebar.button("Sign out", use_container_width=True):
+            st.session_state.pop("astra_user", None)
             st.rerun()
-
-        is_secretary = user["role"].lower() in ["secretary", "admin"]
-
+        is_secretary = user["role"] == "secretary"
+        scopes = user.get("scopes", [])
         if is_secretary:
-            allowed_clubs = CLUBS
-        elif user.get("club") in CLUBS:
-            allowed_clubs = [user["club"]]
+            allowed_groups = COORDINATOR_GROUPS
         else:
-            allowed_clubs = []
+            allowed_groups = [s for s in scopes if s in COORDINATOR_GROUPS]
 
-        if allowed_clubs:
-            st.markdown("### Submit weekly project update")
-
-            with st.form("weekly_report", clear_on_submit=True):
-                club = st.selectbox("Club", allowed_clubs)
-                project = st.text_input("Project / Activity Name")
-                week = st.date_input("Week Starting", value=date.today())
-                progress = st.slider("Project Progress (%)", 0, 100, 0)
-                work = st.text_area("Work Completed This Week")
-                challenges = st.text_area("Challenges / Support Needed")
-                next_plan = st.text_area("Plan for Next Week")
-                photo = st.text_input("Photo URL (optional)")
-                video = st.text_input("Video URL (optional)")
-                spending = st.number_input(
-                    "Amount Spent This Week (₹)",
-                    min_value=0.0,
-                    step=100.0
-                )
-
-                submitted = st.form_submit_button("Submit for Approval")
-
-            if submitted:
-                if not project.strip() or not work.strip():
-                    st.error("Project name and completed work are required.")
-                else:
-                    new_row = [
-                        datetime.now().isoformat(timespec="seconds"),
-                        club,
-                        project.strip(),
-                        week.isoformat(),
-                        progress,
-                        work.strip(),
-                        challenges.strip(),
-                        next_plan.strip(),
-                        photo.strip(),
-                        video.strip(),
-                        spending,
-                        user["email"],
-                        "Pending",
-                        ""
-                    ]
-
-                    ws = get_worksheet(book, "Updates", HEADERS)
-                    ws.append_row(new_row, value_input_option="USER_ENTERED")
-                    st.success("Submitted. Waiting for Secretary approval.")
-                    st.rerun()
-
-        if is_secretary:
-            st.markdown("### Review pending reports")
-            all_reports = read_updates(book)
-
-            pending = all_reports[
-                all_reports["status"].astype(str).str.lower() == "pending"
-            ]
-
-            if pending.empty:
-                st.info("No pending reports.")
+        st.markdown("#### Submit a weekly update")
+        with st.form("weekly_update", clear_on_submit=True):
+            group = st.selectbox("Your assigned group", allowed_groups) if allowed_groups else None
+            project = st.text_input("Project / activity name")
+            week = st.date_input("Week starting", value=date.today())
+            progress = st.slider("Progress (%)", 0, 100, 0)
+            work = st.text_area("Work completed")
+            challenges = st.text_area("Challenges / support needed")
+            next_plan = st.text_area("Plan for next week")
+            photo = st.text_input("Photo URL (optional)")
+            video = st.text_input("Video URL (optional)")
+            spent = st.number_input("Amount spent this week (₹)", min_value=0.0, step=100.0)
+            submit_update = st.form_submit_button("Submit for Secretary approval", disabled=not allowed_groups)
+        if submit_update:
+            if not project.strip() or not work.strip():
+                st.error("Enter a project name and work completed.")
             else:
-                for idx, row in pending.iterrows():
+                updates_ws.append_row([
+                    datetime.now().isoformat(timespec="seconds"), group, project.strip(), week.isoformat(), progress,
+                    work.strip(), challenges.strip(), next_plan.strip(), photo.strip(), video.strip(), spent,
+                    user["email"], "Pending", "", "", "False",
+                ], value_input_option="USER_ENTERED")
+                st.success("Submitted privately. The Secretary must approve and publish it.")
+                st.rerun()
+
+        if is_secretary:
+            st.markdown("#### Secretary review queue")
+            pending = updates[updates["status"].astype(str).str.lower().eq("pending")] if not updates.empty else updates
+            if pending.empty:
+                st.info("No pending weekly updates.")
+            else:
+                for sheet_row, (_, row) in enumerate(pending.iterrows(), start=2):
                     with st.container(border=True):
-                        st.markdown(f"**{row['project']} — {row['club']}**")
-                        st.write(row["work_completed"])
-                        st.caption(
-                            f"Submitted by {row['submitted_by']} | "
-                            f"Progress: {row['progress']}%"
-                        )
+                        st.markdown(f"**{row.get('project', '')} · {row.get('club', '')}**")
+                        st.write(row.get("work_completed", ""))
+                        st.caption(f"Submitted by {row.get('submitted_by', '')} · Progress {row.get('progress', 0)}%")
+                        note = st.text_input("Review note", key=f"review_note_{sheet_row}")
+                        left, right = st.columns(2)
+                        if left.button("Approve", key=f"approve_{sheet_row}"):
+                            all_values = updates_ws.get_all_values()
+                            header = all_values[0]
+                            actual_row = next((i for i, vals in enumerate(all_values[1:], start=2) if len(vals) > 11 and vals[11] == str(row.get("submitted_by", "")) and len(vals) > 2 and vals[2] == str(row.get("project", "")) and vals[0] == str(row.get("timestamp", ""))), None)
+                            if actual_row:
+                                updates_ws.update_cell(actual_row, header.index("status") + 1, "Approved")
+                                updates_ws.update_cell(actual_row, header.index("reviewed_by") + 1, user["email"])
+                                if "review_notes" in header: updates_ws.update_cell(actual_row, header.index("review_notes") + 1, note)
+                                st.success("Report approved. It remains unpublished until you publish it.")
+                                st.rerun()
+                        if right.button("Reject", key=f"reject_{sheet_row}"):
+                            all_values = updates_ws.get_all_values()
+                            header = all_values[0]
+                            actual_row = next((i for i, vals in enumerate(all_values[1:], start=2) if len(vals) > 11 and vals[11] == str(row.get("submitted_by", "")) and len(vals) > 2 and vals[2] == str(row.get("project", "")) and vals[0] == str(row.get("timestamp", ""))), None)
+                            if actual_row:
+                                updates_ws.update_cell(actual_row, header.index("status") + 1, "Rejected")
+                                updates_ws.update_cell(actual_row, header.index("reviewed_by") + 1, user["email"])
+                                if "review_notes" in header: updates_ws.update_cell(actual_row, header.index("review_notes") + 1, note)
+                                st.rerun()
+            st.markdown("#### Publish approved updates")
+            approved_unpublished = updates[(updates["status"].astype(str).str.lower().eq("approved")) & (~updates["published"].astype(str).str.lower().isin(["true", "yes", "1", "published"]))] if not updates.empty else updates
+            if approved_unpublished.empty:
+                st.info("No approved updates waiting for publication.")
+            else:
+                for sheet_row, (_, row) in enumerate(approved_unpublished.iterrows(), start=2):
+                    with st.container(border=True):
+                        st.write(f"{row.get('project', '')} · {row.get('club', '')}")
+                        if st.button("Publish", key=f"publish_{sheet_row}"):
+                            all_values = updates_ws.get_all_values()
+                            header = all_values[0]
+                            actual_row = next((i for i, vals in enumerate(all_values[1:], start=2) if len(vals) > 11 and vals[11] == str(row.get("submitted_by", "")) and len(vals) > 2 and vals[2] == str(row.get("project", "")) and vals[0] == str(row.get("timestamp", ""))), None)
+                            if actual_row:
+                                updates_ws.update_cell(actual_row, header.index("published") + 1, "True")
+                                st.success("Update published to the public dashboard.")
+                                st.rerun()
 
-                        approve_col, reject_col = st.columns(2)
-
-                        if approve_col.button("Approve", key=f"approve_{idx}"):
-                            all_reports.loc[idx, "status"] = "Approved"
-                            all_reports.loc[idx, "reviewed_by"] = user["email"]
-                            ws = get_worksheet(book, "Updates", HEADERS)
-                            ws.update(
-                                [HEADERS] + all_reports[HEADERS]
-                                .fillna("").astype(str).values.tolist()
-                            )
-                            st.rerun()
-
-                        if reject_col.button("Reject", key=f"reject_{idx}"):
-                            all_reports.loc[idx, "status"] = "Rejected"
-                            all_reports.loc[idx, "reviewed_by"] = user["email"]
-                            ws = get_worksheet(book, "Updates", HEADERS)
-                            ws.update(
-                                [HEADERS] + all_reports[HEADERS]
-                                .fillna("").astype(str).values.tolist()
-                            )
-                            st.rerun()
-        else:
-            st.info(
-                "You can submit reports for your assigned club. "
-                "The Secretary approves reports before publication."
-            )
+        if allowed_groups and not is_secretary:
+            st.info("Your submissions remain private until the Secretary approves and publishes them.")
 
 st.divider()
-st.caption("ASTRA Student Council | Sandip University")
-
+st.caption("ASTRA Student Council · Sandip University")

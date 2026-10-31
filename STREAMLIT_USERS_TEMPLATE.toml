@@ -1,0 +1,69 @@
+# Add this section to Streamlit Cloud → Manage app → Settings → Secrets.
+# Set a unique, strong password for each account yourself.
+# Do not upload this file to GitHub or reuse passwords from the registration spreadsheet.
+
+[users."shivadurishetti.aero@sandipuniversity.edu.in"]
+name = "Durishetti Shiva Vishnu Vardhan"
+role = "coordinator"
+scopes = ["Rocketry"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."gaudavenkatesh.aero@sandipuniversity.edu.in"]
+name = "Venkatesh Gauda"
+role = "coordinator"
+scopes = ["Cultural"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."rathnakarbhoompally.aero@sandipuniversity.edu.in"]
+name = "Bhoompally Rathnakar"
+role = "secretary"
+scopes = ["Aeromodelling", "Rocketry", "Astronomy", "Technical", "Research", "Cultural", "Non-Technical", "Disciplinary Committee", "Sports", "Media Team"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."singhanushka.aero@sandipuniversity.edu.in"]
+name = "Anushka Singh K"
+role = "coordinator"
+scopes = ["Non-Technical"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."srivastavaaarvy.aero@sandipuniversity.edu.in"]
+name = "Aarvy Srivastava"
+role = "coordinator"
+scopes = ["Aeromodelling"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."rajkothuru.aero@sandipuniversity.edu.in"]
+name = "K Prosper Raj"
+role = "coordinator"
+scopes = ["Disciplinary Committee"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."shreyagavhane.aero@sandipuniversity.edu.in"]
+name = "Shreya Bhupesh Gavhane"
+role = "coordinator"
+scopes = ["Sports"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."jaswanthsista20@gmail.com"]
+name = "Jaswanth Sri Sista"
+role = "coordinator"
+scopes = ["Astronomy"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."pushpalanaidu.aero@sandipuniversity.edu.in"]
+name = "P. Moukthik Naidu"
+role = "coordinator"
+scopes = ["Technical", "Research"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."jayasompalli.aero@sandipuniversity.edu.in"]
+name = "Sompalli Jayasree"
+role = "coordinator"
+scopes = ["Sports"]
+password = "SET_A_UNIQUE_PASSWORD"
+
+[users."rajatdeshmukh.aero@sandipuniversity.edu.in"]
+name = "Rajat Bhaskar Deshmukh"
+role = "coordinator"
+scopes = ["Media Team"]
+password = "SET_A_UNIQUE_PASSWORD"

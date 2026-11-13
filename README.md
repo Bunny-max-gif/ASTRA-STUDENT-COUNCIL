@@ -10,14 +10,8 @@ Next.js + Supabase. Free to host (Vercel + Supabase + GitHub). Public dashboard 
 4. **GitHub**: create a new repository and upload this folder (`.env.local` is ignored by `.gitignore`).
 5. **Vercel**: sign in with GitHub, import the repository, add the two environment variables from `.env.example`, click Deploy.
 6. **Tell Supabase your site address**: Authentication > URL Configuration. Set Site URL to your Vercel link and add `https://YOUR-SITE/set-password` to Redirect URLs.
-7. **Invite people**: Authentication > Users > Invite user, one college email each. They click the email link and set their own password.
-8. **Give each person a role**: for each person run a block like this in the SQL Editor (examples are at the bottom of `schema.sql`):
-   ```sql
-   insert into profiles (id, name, role, club_ids)
-     select id, 'Full Name', 'coordinator', '{rocketry}' from auth.users where email = 'their.email@college.edu';
-   ```
-   Roles: `president`, `vice_president`, `secretary`, `vice_secretary`, `treasurer`, `coordinator`.
-   Club ids: `aeromodeling`, `rocketry`, `astronomy`, `cultural`, `sports`, `technical`, `non-technical`, `research`, `disciplinary`, `media`.
+7. **Invite people**: Authentication > Users > Invite user, one college email each. Existing Auth users do not need another invite. Staff should set their own password using the invite or password-reset flow.
+8. **Assign staff access**: after all listed accounts exist in Authentication > Users, run `supabase/staff_access.sql` in the SQL Editor. It assigns roles and coordinator club access, and stops with an explicit error if an email has not been invited. Re-running it safely updates those profiles. Do not add passwords to this file or the repository.
 9. **Keep the free project awake**: in GitHub go to Settings > Secrets and variables > Actions, add `SUPABASE_URL` and `SUPABASE_ANON_KEY`. The included workflow pings the database every 3 days.
 10. **Test**: log in as a coordinator and submit; log in as the Secretary and approve; open the public link and check it appears.
 

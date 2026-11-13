@@ -79,7 +79,8 @@ create view club_budget as
   group by c.id;
 grant select on club_budget to anon, authenticated;
 
--- ADD PEOPLE (after inviting them in Authentication > Users). One block per person:
+-- For the provided staff role assignments, run staff_access.sql after inviting
+-- users in Authentication > Users. For future staff, use a block like this:
 -- insert into profiles (id, name, role, club_ids)
 --   select id, 'Full Name', 'coordinator', '{rocketry}' from auth.users where email = 'their.email@college.edu';
 -- Roles: president, vice_president, secretary, vice_secretary, treasurer, coordinator
